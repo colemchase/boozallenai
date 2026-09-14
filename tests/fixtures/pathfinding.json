@@ -1,0 +1,18 @@
+[
+  {
+    "name": "swift-wall-detour",
+    "event": {"game_map": [["start", "wall", "treasure"], ["normal", "normal", "normal"]], "strategy": "swift"},
+    "expected": {"path": ["down", "right", "right", "up"], "steps": 4, "start_position": [0, 0]}
+  },
+  {
+    "name": "coin-detour",
+    "event": {"game_map": [["start", "normal", "treasure"], ["c7", "wall", "wall"]], "strategy": "get_coins"},
+    "expected": {"path": ["down", "up", "right", "right"], "steps": 4, "start_position": [0, 0]}
+  },
+  {
+    "name": "missing-map",
+    "event": {},
+    "status": 400,
+    "expected": {"error": "Missing game_map"}
+  }
+]

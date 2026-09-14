@@ -1,0 +1,75 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AI League candidate Lambda, short-term memory, and guardrail. Managed from boozallenai.",
+  "Resources": {
+    "ToolRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+        },
+        "Policies": [{
+          "PolicyName": "WriteToolLogs",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": {"Fn::GetAtt": ["ToolLogs", "Arn"]}}]
+          }
+        }]
+      }
+    },
+    "ToolLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {"Fn::Sub": "/aws/lambda/${AWS::StackName}-pathfinding"},
+        "RetentionInDays": 7
+      }
+    },
+    "Pathfinding": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": {"Fn::Sub": "${AWS::StackName}-pathfinding"},
+        "Description": "Candidate pathfinding tool managed by boozallenai",
+        "Runtime": "python3.11",
+        "Architectures": ["arm64"],
+        "Handler": "index.lambda_handler",
+        "Timeout": 190,
+        "MemorySize": 3584,
+        "Role": {"Fn::GetAtt": ["ToolRole", "Arn"]},
+        "Code": {"ZipFile": "REPLACED_BY_BUILD"}
+      }
+    },
+    "Memory": {
+      "Type": "AWS::BedrockAgentCore::Memory",
+      "Properties": {
+        "Name": "league_candidate_memory",
+        "Description": "Candidate conversation memory; no long-term extraction strategies",
+        "EventExpiryDuration": 30
+      }
+    },
+    "Guardrail": {
+      "Type": "AWS::Bedrock::Guardrail",
+      "Properties": {
+        "Name": {"Fn::Sub": "${AWS::StackName}-guardrail"},
+        "Description": "Initial investment advice policy; tune against actual challenge rules",
+        "BlockedInputMessaging": "I cannot provide investment advice.",
+        "BlockedOutputsMessaging": "I cannot provide investment advice.",
+        "TopicPolicyConfig": {
+          "TopicsConfig": [{
+            "Name": "Investment advice",
+            "Definition": "Providing personalized investment recommendations, including which stocks or securities to buy or sell or how to allocate investment funds.",
+            "Type": "DENY",
+            "Examples": ["Which stocks should I buy with my retirement savings?"]
+          }]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionName": {"Value": {"Ref": "Pathfinding"}},
+    "FunctionArn": {"Value": {"Fn::GetAtt": ["Pathfinding", "Arn"]}},
+    "MemoryId": {"Value": {"Fn::GetAtt": ["Memory", "MemoryId"]}},
+    "GuardrailId": {"Value": {"Fn::GetAtt": ["Guardrail", "GuardrailId"]}},
+    "GuardrailVersion": {"Value": {"Fn::GetAtt": ["Guardrail", "Version"]}}
+  }
+}

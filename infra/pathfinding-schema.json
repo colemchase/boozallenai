@@ -1,0 +1,35 @@
+[
+  {
+    "name": "find_path",
+    "description": "Find a path through a dungeon game map from start position to treasure. Pass the complete game_map array exactly as received without modification.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "game_map": {
+          "description": "2D array representing the game map. Pass exactly as given, do not shorten.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "start_pos": {
+          "description": "Starting position as given in the prompt",
+          "type": "array"
+        },
+        "goal_pos": {
+          "description": "Goal position [row, col]",
+          "type": "array"
+        },
+        "strategy": {
+          "description": "Pathfinding strategy name to use",
+          "type": "string"
+        }
+      },
+      "required": ["game_map"],
+      "additionalProperties": true
+    }
+  }
+]

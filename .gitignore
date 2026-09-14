@@ -1,0 +1,10 @@
+# Local account exports, credentials, and downloaded deployment packages
+.aws/
+.env
+.env.*
+!.env.example
+credentials
+.local/
+*.zip
+__pycache__/
+.DS_Store
