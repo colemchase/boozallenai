@@ -261,7 +261,7 @@ def _merge_rules(rules, overrides):
                     rules[target_key][str(cell)] = str(amount)
                 else:
                     rules[target_key][str(cell)] = _number(amount, rules[target_key].get(str(cell), 0))
-    for set_key in ("walls", "items", "avoid"):
+    for set_key in ("walls", "items"):
         value = overrides.get(set_key)
         if isinstance(value, dict):
             for cell, enabled in value.items():
@@ -273,9 +273,31 @@ def _merge_rules(rules, overrides):
             rules[set_key].update(str(cell) for cell in value)
         elif isinstance(value, str) and value:
             rules[set_key].add(value)
+
+    # Treat structured "avoid" as a soft risk, not a hard wall. Agents often
+    # translate prompt text like "bad c8" into avoid=["c8"]. Hard blocking is
+    # reserved for explicit block/blocked fields or avoid-at-all-costs wording.
+    avoid_value = overrides.get("avoid")
+    if isinstance(avoid_value, dict):
+        for cell, enabled in avoid_value.items():
+            if enabled:
+                _mark_soft_risk(rules, str(cell), 1)
+            else:
+                rules["damage"].pop(str(cell), None)
+    elif isinstance(avoid_value, (list, tuple, set)):
+        for cell in avoid_value:
+            _mark_soft_risk(rules, str(cell), 1)
+    elif isinstance(avoid_value, str) and avoid_value:
+        _mark_soft_risk(rules, avoid_value, 1)
+
     blocked = overrides.get("blocked") or overrides.get("block")
     if isinstance(blocked, (list, tuple, set)):
-        rules["avoid"].update(str(cell) for cell in blocked)
+        for cell in blocked:
+            _mark_hard_block(rules, str(cell))
+    elif isinstance(blocked, dict):
+        for cell, enabled in blocked.items():
+            if enabled:
+                _mark_hard_block(rules, str(cell))
     for scalar in ("starting_lives", "life_bonus", "treasure_bonus", "max_steps", "max_targets", "step_cost"):
         if scalar in overrides:
             rules[scalar] = int(_number(overrides[scalar], rules[scalar]))
@@ -288,15 +310,30 @@ def _merge_cell_config(rules, cell, config):
     if "reward" in config or "points" in config:
         rules["rewards"][cell] = _number(config.get("reward", config.get("points")), 0)
     if "damage" in config:
-        rules["damage"][cell] = _number(config["damage"], 0)
-    if config.get("avoid") or config.get("blocked") or str(config.get("value", "")).lower() in {"avoid", "avoid_at_all_cost", "blocked"}:
-        rules["avoid"].add(cell)
+        _mark_soft_risk(rules, cell, _number(config["damage"], 0))
+    if config.get("blocked") or str(config.get("value", "")).lower() in {"avoid_at_all_cost", "avoid_at_all_costs", "blocked", "block"}:
+        _mark_hard_block(rules, cell)
+    elif config.get("avoid") or str(config.get("value", "")).lower() == "avoid":
+        _mark_soft_risk(rules, cell, 1)
     if config.get("wall"):
         rules["walls"].add(cell)
     if "requires" in config:
         rules["requires"][cell] = str(config["requires"])
     if config.get("item") or config.get("collectible"):
         rules["items"].add(cell)
+
+
+def _mark_soft_risk(rules, cell, amount=1):
+    cell = str(cell)
+    rules["avoid"].discard(cell)
+    rules["damage"][cell] = int(_number(amount, 1))
+    rules["rewards"].pop(cell, None)
+
+
+def _mark_hard_block(rules, cell):
+    cell = str(cell)
+    rules["avoid"].add(cell)
+    rules["damage"].pop(cell, None)
 
 
 def _merge_prompt_rule_hints(rules, text):
@@ -316,9 +353,8 @@ def _merge_prompt_rule_hints(rules, text):
             clause,
         )
         if hard_block:
-            rules["avoid"].update(cells)
             for cell in cells:
-                rules["damage"].pop(cell, None)
+                _mark_hard_block(rules, cell)
             continue
 
         damage_match = re.search(r"\b(?:damage|costs?|life|lives)\b[^0-9\n]{0,10}(\d+)", clause)
@@ -326,24 +362,19 @@ def _merge_prompt_rule_hints(rules, text):
         if damage_match or soft_danger:
             amount = int(damage_match.group(1)) if damage_match else 1
             for cell in cells:
-                if cell not in rules["avoid"]:
-                    rules["damage"][cell] = amount
-                    if soft_danger:
-                        rules["rewards"].pop(cell, None)
+                _mark_soft_risk(rules, cell, amount)
 
     # Backstop for compact hard-block forms that do not split neatly.
     for cell in re.findall(
         r"\b(c\d+)\b[^.\n]{0,50}?\b(?:block|forbid|never|hard\s+avoid|avoid\s+at\s+all\s+costs?)\b",
         lowered,
     ):
-        rules["avoid"].add(cell)
-        rules["damage"].pop(cell, None)
+        _mark_hard_block(rules, cell)
     for cell in re.findall(
         r"\b(?:block|forbid|never|hard\s+avoid|avoid\s+at\s+all\s+costs?)\b[^.\n]{0,50}?\b(c\d+)\b",
         lowered,
     ):
-        rules["avoid"].add(cell)
-        rules["damage"].pop(cell, None)
+        _mark_hard_block(rules, cell)
 
 
 def _number(value, default):

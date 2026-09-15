@@ -1,8 +1,17 @@
 # Supervisor custom model experiment
 
-Goal: train a custom model for the supervisor as an overnight experiment. This is higher risk than the pathfinding custom model because the supervisor must route and format every challenge correctly.
+Goal: train a custom model for the current one-supervisor architecture without changing the working tools. The model should learn cheap routing and exact output style, while Lambdas still do the hard deterministic work.
 
-Do not replace the proven supervisor until this model passes a full game run. Keep the current foundation supervisor as the rollback.
+Current baseline to protect:
+
+```text
+Score: 11863
+Architecture: one supervisor, no sub-agents
+Navigation prompt: use strategy maximize_score. bad c8.
+Tools: Pathfinding, schedule-solver, claims-solver, open-data-lookup, grey-code, memtool, gr
+```
+
+There is no true guarantee that a custom model will beat the foundation model. The safest way to try is to train only the supervisor routing/relay behavior and test it against the baseline. Roll back immediately if any challenge fails.
 
 ## Files
 
@@ -14,113 +23,114 @@ Do not replace the proven supervisor until this model passes a full game run. Ke
 - `evaluators/supervisor_final_reward.py`
 - `scripts/generate_datasets.py`
 
-## What this trains
+Regenerate datasets with:
 
-Stage 1 trains routing and direct-answer behavior:
+```bash
+python3 model-workshop/supervisor/scripts/generate_datasets.py
+```
 
-- navigation prompt -> `pathfinding_specialist` tool call
-- c4 Web Weaver -> `AgentCoreGatewayTool-open-data-lookup___lookup_open_data` tool call
-- c18 Claims Creature -> `AgentCoreGatewayTool-claims-solver___analyze_eob` tool call
-- c42 Grey Key -> `AgentCoreGatewayTool-grey-code___process_grey_code_challenge` tool call
-- c32 Grey Door -> `AgentCoreGatewayTool-grey-code___process_grey_code_challenge` tool call
-- c1 Violet Vault -> exact refusal
-- c2 Schedule Sage -> raw minified JSON, no fences
-- c5 Simple Question -> shortest answer
+## Current tool names used in the dataset
 
-Stage 2 trains exact final-answer style:
+These match the working one-supervisor combat logs. If the UI shows different names, edit `scripts/generate_datasets.py`, regenerate, and train with the regenerated files.
 
-- no markdown fences
-- no preambles
-- no repeated questions
-- exact JSON strings
-- exact tool result relay
+```text
+AgentCoreGatewayTool-Pathfinding-38eb___find_treasure_path
+AgentCoreGatewayTool-schedule-solver___analyze_sections
+AgentCoreGatewayTool-claims-solver-38eb___analyze_eob
+AgentCoreGatewayTool-open-data-lookup-38eb___lookup_open_data
+AgentCoreGatewayTool-14451b01-38eb___process_grey_code_challenge
+```
 
-## Stage 1: supervisor routing
+## Stage 1: routing/tool-call training
 
-Create the evaluator first:
+This teaches Qwen3-0.6B when to call each tool and when to answer directly.
 
-1. Go to SageMaker Studio > Assets > Evaluators.
-2. Create a Reward Function evaluator named `supervisor-routing-reward`.
-3. Paste the full contents of `evaluators/supervisor_routing_reward.py` as method code.
-4. Test/create it.
+Create evaluator:
+
+1. SageMaker Studio > Assets > Evaluators.
+2. Create Reward Function named `supervisor-routing-reward`.
+3. Paste `evaluators/supervisor_routing_reward.py`.
+4. Test, then Create.
 
 Start customization:
 
-1. Base model: Qwen3-0.6B.
-2. Customization technique: RLVR.
-3. Training type: LoRA.
-4. Reward function type: Custom.
-5. Reward functions: `supervisor-routing-reward`.
-6. Dataset and output: Upload dataset.
-7. Upload:
+1. Base model: `Qwen3-0.6B`.
+2. Customization technique: `Reinforcement Learning with Verifiable Rewards (RLVR)`.
+3. Training type: `LoRA`.
+4. Reward function type: `Custom`.
+5. Reward function: `supervisor-routing-reward`.
+6. Upload dataset:
    - train: `data/supervisor_routing_train.jsonl`
-   - validation/evaluation: `data/supervisor_routing_validation.jsonl`
-8. Number of epochs: `1`.
-9. Use conservative hyperparameters:
-   - learning rate: `0.00003` to `0.00005`
+   - validation: `data/supervisor_routing_validation.jsonl`
+7. Number of epochs: `1`.
+8. Suggested hyperparameters:
+   - learning rate: `0.00003`
    - temperature: `0.2`
    - rollout temperature: `0.2`
    - LoRA rank: `8` if available
    - rollout samples per prompt: `4` if available
 
-## Stage 2: supervisor exact final output
+Expected success: reward climbs high and tool-name/argument rewards are near 1.0.
 
-Continue from the completed Stage 1 supervisor model, not the base model.
+## Stage 2: exact final-answer relay
 
-Create the evaluator:
+Continue from the completed Stage 1 model. Do not restart from the base model.
 
-1. Go to Assets > Evaluators.
-2. Create a Reward Function evaluator named `supervisor-final-reward`.
-3. Paste `evaluators/supervisor_final_reward.py` as method code.
-4. Test/create it.
+Create evaluator:
+
+1. Create Reward Function named `supervisor-final-reward`.
+2. Paste `evaluators/supervisor_final_reward.py`.
+3. Test, then Create.
 
 Continue customization:
 
-1. Open the completed Stage 1 supervisor model.
+1. Open the completed Stage 1 model.
 2. Choose Continue customization / Train with different technique.
-3. Customization technique: RLVR.
-4. Training type: LoRA.
-5. Reward function type: Custom.
-6. Reward functions: `supervisor-final-reward`.
-7. Upload:
+3. Customization technique: `RLVR`.
+4. Training type: `LoRA`.
+5. Reward function type: `Custom`.
+6. Reward function: `supervisor-final-reward`.
+7. Upload dataset:
    - train: `data/supervisor_final_train.jsonl`
-   - validation/evaluation: `data/supervisor_final_validation.jsonl`
+   - validation: `data/supervisor_final_validation.jsonl`
 8. Number of epochs: `1`.
-9. Use lower-temperature settings:
+9. Suggested hyperparameters:
    - learning rate: `0.00002`
    - temperature: `0.05`
    - rollout temperature: `0.05`
 
-## Register/deploy/test
+Expected success: exact-match/no-preamble rewards are near 1.0.
+
+## Register, deploy, test
 
 1. Register the completed Stage 2 training job ARN in AI League Model Workshop.
 2. Deploy the registered model.
-3. Attach it to a duplicate/test supervisor first if the UI allows duplication.
-4. If duplication is not available, take a screenshot of the current model selection before switching.
-5. Run exactly:
+3. Attach it to the supervisor only. Keep the same tools, guardrail, memory, and compact supervisor prompt.
+4. Run exactly:
 
 ```text
 use strategy maximize_score. bad c8.
 ```
 
-Keep the supervisor custom model only if:
+Keep it only if all are true:
 
-- all 16 challenges pass
-- c2 returns minified JSON with no code fences
-- c18 returns exact claims-solver JSON
+- all 16 prompted challenges pass
+- only one non-prompt loss: the upper c8 spike at row 1 col 4
+- coins earned remains 9100
+- c2 uses schedule-solver
+- c18 uses claims-solver
+- c4 uses open-data-lookup
 - c32 returns only the code
-- c5 answers do not repeat the question
-- total score beats the foundation supervisor baseline
+- total score beats 11863 or at least tokens drop enough to justify retesting
 
-Rollback immediately if any challenge fails. The foundation supervisor has already beaten 11,850; correctness is worth more than custom-model count.
+Rollback immediately if:
 
-## Important caveat
+- path is 15 steps, 77 steps, or misses 9100 coins
+- c2 gets a privacy refusal or uses claims-solver
+- c18 uses schedule-solver
+- c4 gets a privacy refusal
+- output contains `<think>`, markdown fences, or JSON wrappers around final answers
 
-The supervisor tool names in this dataset are based on current combat logs:
+## Best expectation
 
-- `pathfinding_specialist`
-- `AgentCoreGatewayTool-open-data-lookup___lookup_open_data`
-- `AgentCoreGatewayTool-grey-code___process_grey_code_challenge`
-- `AgentCoreGatewayTool-claims-solver___analyze_eob`
-
-If the UI exposes different tool names to the custom model, regenerate the dataset with those exact names before training.
+A good custom supervisor probably saves a few hundred tokens and may add a custom-model bonus. It should not be expected to improve routing quality; the foundation supervisor already routes correctly. The custom model is only worth keeping if it preserves correctness and lowers token cost.
