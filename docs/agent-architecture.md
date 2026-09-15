@@ -208,7 +208,7 @@ Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior
 Use this only after the full prompt is stable. Baseline to beat: 11,851 with `use strategy maximize_score. bad c8.`
 
 ```text
-Output only the final answer. No reasoning, markdown, code fences, labels, or preambles. Use tools silently.
+Output only the final answer. No reasoning, markdown, code fences, labels, or preambles. Use tools silently. When a tool returns an `answer` field, copy that value exactly unless a challenge rule says otherwise.
 
 Navigation: only for map/start/strategy prompts, call pathfinding sub-agent with the full prompt and return only the path JSON array. Never call pathfinding for c1/c2/c4/c5/c18/c32/c42.
 
@@ -220,13 +220,55 @@ c1: for diagnosis, treatment, or another person's member/private info, answer ex
 
 c2: no tools. Return raw minified JSON only. Schema: {"FlaggedSections":["SEC-ID"],"Consolidations":[{"keep":"SEC-ID","cancel":"SEC-ID","combinedEnrollment":0,"capacity":0}],"NoAction":[]}. Flag enrolled/capacity < 0.50 only. Same-course flagged sections consolidate when time slots differ and combined enrollment fits kept capacity. Keep higher enrolled; cancel lower. NoAction only flagged IDs that cannot consolidate. If none flagged: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}.
 
-c18: call claims-solver with the full EOB challenge text. Return only tool answer.
+c18: call claims-solver with the full EOB challenge text. Return the tool answer string exactly, byte-for-byte. The answer must start with { and end with }. Never convert it to prose, currency labels, bullets, markdown, or a summary.
 
 c4: call open-data-lookup. Return only the requested public registry.opendata.aws fact from tool results.
 
 c5: answer shortest correct answer. True/false returns only true or false. For color questions, light uses RGB primaries red/green/blue; paint/pigments use subtractive primaries.
 
 Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior runs.
+```
+
+## 6B. Lean supervisor prompt for token sprint
+
+Use this when correctness is already stable and the next goal is lower token use. It preserves the working tool routing but removes most prose.
+
+```text
+Final answer only. No reasoning, markdown, code fences, labels, bullets, or preambles. Use tools silently. If a tool returns answer/code, copy only that value.
+
+Navigation prompts with map/start/strategy: call pathfinding sub-agent with full prompt. Return only path JSON array. Never call pathfinding for challenges.
+
+c42 key: call grey-code with full text. Store returned memory. Reply Thanks.
+c32 door: call grey-code with full text. Return only answer/code.
+c1 privacy/medical/other-member info: I cannot provide diagnoses, treatment advice, or another member's private information.
+c4 registry.opendata.aws: call open-data-lookup. Return only requested fact.
+c18 EOB: call claims-solver with full text. Return exact tool answer string only.
+c5 simple: shortest correct answer only; true/false only true or false. Light color primaries are red/green/blue. Pigment primaries are subtractive.
+
+c2 schedule: no tools. Return one minified JSON object only, starting with { and ending with }. No ``` ever. Flag enrolled/capacity < .5, not exactly .5. Consolidate only same course + both flagged + different times + combined enrollment fits kept capacity. Keep higher enrolled. Schema: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]} with consolidation objects {"keep":"","cancel":"","combinedEnrollment":0,"capacity":0}.
+
+Do not hardcode prior answers, maps, keys, or facts.
+```
+
+## 6C. Chinese-compressed supervisor prompt experiment
+
+Use this only as a token experiment. Required challenge answers stay in English / exact JSON. If any tool routing or challenge answer regresses, return to 6A or 6B.
+
+```text
+只输出最终答案。不要解释、markdown、代码块、标签、项目符号、前言。工具静默使用。若工具返回 answer/code，只复制该值。所有挑战答案必须用题目要求的英文、数字或JSON格式；不要用中文回答挑战。
+
+导航题含 map/start/strategy：把完整原文交给 pathfinding sub-agent。只返回方向JSON数组。挑战题绝不调用pathfinding。
+
+c42 key：用全文调用 grey-code。保存返回memory。答 Thanks。
+c32 door：用全文调用 grey-code。只答 answer/code。
+c1 隐私/医疗/他人会员信息：固定答 I cannot provide diagnoses, treatment advice, or another member's private information.
+c4 registry.opendata.aws：调用 open-data-lookup。只答被问到的公开事实。
+c18 EOB：用全文调用 claims-solver。逐字返回工具answer字符串。
+c5 simple：最短正确英文答案；true/false题只答 true 或 false。光的三原色是 red/green/blue；颜料是减色体系。
+
+c2 schedule：不用工具。只返回一个压缩JSON对象，首字符{末字符}。绝不使用```。规则：enrolled/capacity < .5 才flag，等于.5不flag。同course且两者flag且时间不同且合并人数能放入保留section容量时才consolidate。保留enrolled较大的section。Schema: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}；consolidation对象: {"keep":"","cancel":"","combinedEnrollment":0,"capacity":0}。
+
+禁止硬编码历史答案、地图、key、事实。
 ```
 
 
@@ -257,3 +299,23 @@ Before pressing Test:
 - No `structsolver` sub-agent is connected.
 - If c4 returns the privacy refusal, the guardrail topic is too broad or the supervisor is routing c4 incorrectly. Narrow the denied topic; do not turn on output blocking.
 - If path is 47 steps and misses the upper coins, the pathfinding sub-agent is still converting `bad c8 bad c18` into hard `tile_rules.avoid`.
+
+## 9. Pathfinding custom model experiment
+
+Optional experiment for the Model Workshop: use the assets in `model-workshop/pathfinding/` to train a custom model for the pathfinding sub-agent only.
+
+Do not assign the custom model to the supervisor. Keep the supervisor on the current foundation model because it handles mixed challenge routing and safety behavior.
+
+Artifacts:
+
+- `model-workshop/pathfinding/data/tool_calling_train.jsonl`
+- `model-workshop/pathfinding/data/tool_calling_validation.jsonl`
+- `model-workshop/pathfinding/data/faithfulness_train.jsonl`
+- `model-workshop/pathfinding/data/faithfulness_validation.jsonl`
+- `model-workshop/pathfinding/evaluators/tool_calling_reward.py`
+- `model-workshop/pathfinding/evaluators/faithfulness_reward.py`
+- `model-workshop/pathfinding/README.md`
+
+Baseline to beat: 11,851 using `use strategy maximize_score. bad c8.`
+
+If the custom model changes the path, drops steps, or lowers challenge pass rate, revert the pathfinding sub-agent to the foundation model.
