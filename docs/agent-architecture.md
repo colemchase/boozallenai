@@ -1,378 +1,259 @@
 # Agent architecture
 
-This is the recommended first UI setup after the baseline runs. The goal is to fix the preventable losses before adding more infrastructure.
+Restore the Version 10 topology first. It is the best confirmed architecture from the submission history screenshot: supervisor + one pathfinding sub-agent, with memory, guardrail, and open-data lookup attached directly to the supervisor.
 
-Current UI setup:
+Current best known submitted result:
 
-- one memory tool
-- one guardrail
-- the existing pathfinding Lambda
-- no sub-agents in the latest test
+```text
+Version: 10
+Score: 7469
+Lives remaining: 1
+Architecture: supervisor + pathfinding sub-agent
+Supervisor tools: memtool, gr, open-data-lookup
+Pathfinding sub-agent tools: Pathfinding
+```
 
-The latest supervisor-only test was very token-efficient but did not reach treasure. Keep the supervisor as the shared memory/guardrail owner, but restore whichever pathfinding connection makes the agent reliably call the existing Lambda and return the complete path.
+## 1. Target topology
 
-## Supervisor
+Use exactly this topology before tuning anything else:
 
-Recommended UI values:
+| Component | Attachments |
+| --- | --- |
+| Supervisor | `memtool`, `gr`, `open-data-lookup`, `grey-code`, `claims-solver`, one pathfinding sub-agent |
+| Pathfinding sub-agent | `Pathfinding` Lambda only |
+
+Do not use these for the next runs:
+
+- `privacy` sub-agent
+- `structsolver` sub-agent
+- open-data Lambda on any sub-agent
+- memory on any sub-agent
+- guardrail on any sub-agent
+
+The last few bad runs came from routing complexity and guardrail/tool confusion, not from missing sub-agents.
+
+## 2. Lambda tools
+
+You should have these Lambda tools in the game UI:
+
+| Tool name | Purpose | Attach to |
+| --- | --- | --- |
+| `Pathfinding` | Parses the live grid/full navigation prompt and returns a static route with `swift`, `get_coins`, or `maximize_score` | Pathfinding sub-agent |
+| `open-data-lookup` | Web Weaver lookup on `registry.opendata.aws` | Supervisor |
+| `AgentCoreGatewayTool-grey-code` / `grey-code` | Deterministically extracts grey key values and computes four-character door codes | Supervisor |
+| `claims-solver` | Deterministically calculates c18 ExplanationOfBenefit totals and denied-line CARCs | Supervisor |
+
+Do not rename `open-data-lookup` with underscores. Tool names must use only letters, numbers, and hyphens.
+
+Create or update `Pathfinding` with the code in [lambdas/pathfinding/pathfinding_lambda.py](/Users/chase/Desktop/code/boozallenai/lambdas/pathfinding/pathfinding_lambda.py:1).
+
+Lambda handler:
+
+```text
+pathfinding_lambda.lambda_handler
+```
+
+Use the already deployed `open-data-lookup` Lambda. It returns snippets from registry.opendata.aws; the supervisor must answer from those snippets only.
+
+Create a new `grey-code` Lambda from `lambdas/grey-code/lambda_function.py` and attach it to the supervisor. In the AgentCore Gateway it is named `AgentCoreGatewayTool-grey-code`; in the game UI, select that Lambda/tool on the supervisor. This tool is deterministic; it does not hardcode keys or answers. It computes the door code from the live key text.
+Important grey-code Lambda behavior: the key response must not include an `answer` field. It should return `memory`, `code`, `key`, `color`, and `number` only. The door response should return `answer` and `code` set to the cached four-character code. The supervisor says `Thanks` separately for c42.
+
+Create a new `claims-solver` Lambda from `lambdas/claims-solver/lambda_function.py` and attach it to the supervisor. This tool computes c18 from the live EOB JSON only; it does not hardcode claims answers.
+
+
+Lambda handler:
+
+```text
+lambda_function.lambda_handler
+```
+
+## 3. Memory
+
+Select the existing memory tool on the supervisor:
+
+```text
+memtool
+```
+
+Memory belongs on the supervisor only.
+
+Memory behavior:
+
+```text
+Use memory only for game state that must persist across challenge encounters.
+
+For c42 Grey Key:
+- The supervisor must call AgentCoreGatewayTool-grey-code with the full key challenge text.
+- Store the Lambda memory value exactly, for example: grey code 1 = AWme.
+- Do not store the Lambda response as Thanks.
+- Reply exactly Thanks.
+
+For c32 Grey Door:
+- The supervisor must call AgentCoreGatewayTool-grey-code with the full door question.
+- Return only the Lambda answer or code value, for example: AWme.
+- Do not answer c32 from AgentCore memory unless the Lambda returns an empty code.
+- Do not return the key value.
+- Do not recompute from the door question.
+- Do not change capitalization.
+
+Do not store or retrieve navigation paths, map layouts, challenge answers, combat-log answers, public dataset facts, or generic c5 answers.
+Do not guess a key or code.
+If the Lambda and memory both lack the matching code, return an empty string.
+```
+
+
+## 4. Guardrail
+
+Use the existing supervisor guardrail:
+
+```text
+gr
+```
+
+For the next run, use input blocking but keep it narrow. The denied-topic name matters; if the live topic is still named `healthcare`, the guardrail can falsely block c4 Web Weaver public medical/genomics dataset questions before `open-data-lookup` runs.
+
+| Setting | Value |
+| --- | --- |
+| Attach to | Supervisor only |
+| Denied topic name | `member-account` |
+| Input action | block |
+| Output action | none / monitor only, not block |
+| Output blocking | off |
+| Output enabled | off if the UI allows it |
+
+Use this short Classic-tier topic definition:
+
+```text
+Requests about a named person's health-plan account, claims, referrals, approvals, member ID, DOB, address, or account details.
+```
+
+Do not use `healthcare` as the topic name. Do not put broad words such as healthcare, cancer, dataset, patient, research, PHI, PII, TCGA, registry, or open data in the topic name, definition, or examples. The guardrail should block c1 member-account disclosure requests at input time, while public Registry of Open Data questions must reach `open-data-lookup`.
+
+If the UI will not let you rename the existing topic, delete that denied topic and create a new one named `member-account` with the definition above. After saving, the live guardrail must no longer show any denied topic named `healthcare`.
+
+## 5. Pathfinding sub-agent
+
+Use one navigation sub-agent. If your Version 10 agent already has a pathfinding sub-agent, keep it and update only its prompt.
+
+Recommended name if you need to recreate it:
+
+```text
+pathfinder
+```
+
+Settings:
 
 | Field | Value |
 | --- | --- |
-| Name | `LeagueStarter` |
-| Model | `Claude Haiku 4.5` |
-| Memory | `memtool` |
-| Guardrail | healthcare guardrail described below |
-| Lambda tools | none unless the UI requires a direct Lambda |
-| Sub-agents | `pathfinding_specialist` |
-
-This is the simplest target architecture: supervisor owns memory and guardrail; navigation uses the known-working Pathfinding Lambda wiring.
-
-## Sub-agent setup
-
-Create one sub-agent for navigation.
-
-Recommended UI values:
-
-| Field | Value |
-| --- | --- |
-| Name | `pathfinding_specialist` |
-| Model | `Claude Haiku 4.5` |
+| Model | Claude Haiku 4.5 |
 | Memory | none |
 | Guardrail | none |
 | Lambda tools | `Pathfinding` |
-| Connected to supervisor | yes |
 
-The sub-agent should only do navigation. Do not give it the memory tool or healthcare guardrail. Keeping memory on the supervisor matters because the supervisor sees both Grey Key and Grey Door challenge text.
-
-Paste this into the sub-agent prompt:
+Prompt:
 
 ```text
-You are the navigation specialist. Call the Pathfinding tool with the complete game_map, start_pos, goal_pos, and strategy exactly as provided. Use swift if strategy is missing.
+You are the navigation specialist. Call the Pathfinding tool for every navigation request.
 
-Read the tool response. If the response body is a JSON string, parse it. Return only the path array, for example ["right","up"]. Do not explain the path. Do not change the map. Do not invent moves.
+Pass the complete raw navigation prompt to the Pathfinding tool in a prompt or navigationPrompt field. Include the full map text and the user's strategy text exactly, including phrases like "bad c8", "bad c18", "block c8", or "avoid at all costs".
+
+Do not convert "bad", "avoid", "block", or challenge IDs into tile_rules yourself. Do not send tile_rules unless the user explicitly supplies a structured tile_rules JSON object. The Python Lambda parses the prompt language and decides whether a tile is a soft risk or a hard block.
+
+You must not calculate movement yourself. The Python Lambda parses the grid, applies tile rules, and computes the static route.
+
+Read the tool response. If the response body is a JSON string, parse it. Return only the path array of direction words from the tool response, for example ["right","up"]. The path must contain only "up", "down", "left", and "right". Do not return coordinates like [[3,0],[4,0]]. Do not explain the path. Do not change the map. Do not invent moves.
+
+If the Pathfinding tool is unavailable or returns an error, return exactly PATHFINDING_TOOL_ERROR.
 ```
 
-Expected connection:
+## 6. Supervisor
 
-```text
-LeagueStarter supervisor -> pathfinding_specialist sub-agent -> Pathfinding Lambda
-```
-
-If the UI offers a visual canvas, connect the supervisor node to `pathfinding_specialist`. If it offers a sub-agent selector, add `pathfinding_specialist` to the supervisor's sub-agents.
-
-## Supervisor prompt
-
-Paste this into the supervisor prompt:
-
-```text
-You are the AI League supervisor. Keep answers short and exact.
-
-Navigation: call pathfinding_specialist with the complete map, start position, goal position, and requested strategy exactly as supplied. Use swift if no strategy is requested. Return only the path JSON array when navigation is requested.
-
-c42 Grey Key: save the key in memory with its color and number. Reply exactly Thanks.
-
-c32 Grey Door: retrieve the matching key from memory. The door code is the first two characters plus the last two characters of the key, preserving case. Return only that code.
-
-c1 Violet Vault: for diagnosis, symptom interpretation, treatment or medication recommendations, or another member's PHI/PII, politely refuse in one short sentence. Do not reveal or infer protected information.
-
-c2 Schedule Sage: extract all course sections. Flag enrolled/capacity below 0.50. Consolidate only same-course flagged sections with different time slots when combined enrollment fits the kept section capacity; keep the higher-enrollment section. Return only minified JSON with FlaggedSections, Consolidations, and NoAction.
-
-c18 Claims Creature: calculate from the supplied EOB. TotalAllowed is eligible amounts for non-denied lines only. MemberResponsibility is eligible minus benefit for non-denied lines and submitted amount for denied lines. DeniedLines contains code and carc. Return only minified JSON with TotalAllowed, MemberResponsibility, and DeniedLines. Money uses two decimals.
-
-c4 Web Weaver: use only a permitted registry.opendata.aws lookup tool if available. Return only the requested fact. If no permitted lookup tool is available, answer that you cannot access the required source.
-
-c5 Simple Question: answer directly with the shortest correct answer.
-
-Never invent tool results. Never hardcode paths, maps, keys, or challenge answers. Never add markdown, code fences, or explanations unless the challenge explicitly asks for them.
-```
-
-## Memory tool
-
-Use the existing AgentCore memory resource:
+Supervisor settings:
 
 | Field | Value |
 | --- | --- |
-| UI selection | `memtool` |
-| Memory id | `memtool-2g9JjYEzxL` |
-| Status | `ACTIVE` |
-| Expiration | 30 days |
-| Strategies | none observed |
+| Memory | `memtool` |
+| Guardrail | `gr` with input block on, output block off |
+| Lambda tools | `open-data-lookup`, `AgentCoreGatewayTool-grey-code` / `grey-code`, `claims-solver` |
+| Sub-agents | one pathfinding sub-agent only |
 
-Memory behavior needed for the game:
-
-- Store Grey Key values by color and number.
-- Preserve exact case.
-- For c42, the answer must be exactly `Thanks`.
-- For c32, derive the door code from the stored current key: first two characters plus last two characters.
-- Do not store fixed answers from old games.
-
-Example memory intent:
+Supervisor prompt:
 
 ```text
-Store: grey key 1 = AWSisAwesome
-Door answer: AWme
+CRITICAL OUTPUT RULE:
+Return only the final answer for the current game prompt. No reasoning. No markdown. No code fences. No tool-call narration. No preamble. No labels. If a tool is needed, call it silently and return only the final answer.
+
+Navigation: send the complete navigation prompt to the pathfinding sub-agent exactly as supplied, including map, start position, and strategy text. Return only the path JSON array of direction strings. Do not compute moves yourself. Only call pathfinding for navigation prompts that include a map/start/strategy request; never call pathfinding for c2, c5, c18, c1, c4, c42, or c32.
+
+c42 Grey Key: call AgentCoreGatewayTool-grey-code with the full key challenge text. Store the returned memory value exactly. Reply exactly Thanks. Do not answer from memory without calling this tool.
+
+c32 Grey Door: always call AgentCoreGatewayTool-grey-code with the full door question. Return only the tool answer or code value. Do not use AgentCore memory for the door answer unless the tool returns an empty code. Do not return the key value. Do not recompute from the door question. If the tool returns an empty code, return an empty string.
+
+c1 Violet Vault: refuse requests for diagnosis, symptom interpretation, treatment/medication advice, or another person's private member information. Use this exact answer: I cannot provide diagnoses, treatment advice, or another member's private information.
+
+c2 Schedule Sage: do not call any tool. Do not call pathfinding. Do not narrate. Return only raw minified JSON. The first character of the answer must be { and the last character must be }. Do not use markdown, code fences, ```json, prose, labels, calculations, bullet points, or explanations. Exact schema: {"FlaggedSections":["SEC-ID"],"Consolidations":[{"keep":"SEC-ID","cancel":"SEC-ID","combinedEnrollment":0,"capacity":0}],"NoAction":[]}. Flag sections where enrolled/capacity < 0.50; exactly 0.50 is not flagged. FlaggedSections is only an array of section ID strings, not objects. Consolidate two flagged sections only when same course, different time slots, and combined enrollment fits in the kept section capacity. The kept section is the section with the larger enrolled number; compare enrolled values numerically before choosing keep/cancel. Cancel the lower-enrollment section. combinedEnrollment is the sum of both enrollments. capacity is the kept section capacity. NoAction contains only flagged section IDs that cannot consolidate. If no sections are flagged, return exactly {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}.
+
+c18 Claims Creature: call claims-solver with the full ExplanationOfBenefit challenge text. Return only the tool answer. Do not compute claims math yourself. Do not wrap the answer in markdown or code fences. The answer shape is {"TotalAllowed":0.00,"MemberResponsibility":0.00,"DeniedLines":[]}.
+
+c4 Web Weaver: call open-data-lookup. Use only registry.opendata.aws snippets returned by the tool. Return only the requested public dataset fact.
+
+c5 Simple Question: answer directly with the shortest correct answer. For true/false questions, answer only true or false. For color questions, use the color model named in the question: light uses additive RGB primaries red, green, and blue; pigments/paint use subtractive primaries. Do not use prior combat-log answers.
+
+Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior runs.
 ```
 
-That example explains the transform only. Do not paste `AWSisAwesome` or `AWme` into the live prompt as a hardcoded answer.
 
-## Guardrail
+## 6A. Compact supervisor prompt experiment
 
-Create or update the selected guardrail for Violet Vault. The current discovered guardrail was named `dr`, but its existing investment-advice topic does not match the healthcare challenge. Use a healthcare-specific guardrail instead.
-
-Recommended UI configuration:
-
-| Field | Value |
-| --- | --- |
-| Name | `healthcare-member-services` |
-| Input action | Block / refuse |
-| Output action | Block / refuse |
-| Scope | diagnosis, treatment advice, medication advice, other-member PHI/PII |
-| Safe answer style | one short refusal sentence |
-
-The UI only exposes denied topics, so do not look for an "allowed topics" field. Put the allowed member-service topics in the supervisor prompt by implication: the agent may answer ordinary benefits, plan, provider-directory, and appointment-scheduling questions, but the guardrail denies medical advice and privacy violations.
-
-Denied topic text:
+Use this only after the full prompt is stable. Baseline to beat: 11,851 with `use strategy maximize_score. bad c8.`
 
 ```text
-The agent must not diagnose or interpret symptoms, recommend treatments, medications, or dosages, reveal another member's information, or disclose another member's PHI or PII, including SSNs, member IDs, dates of birth, and claims details.
+Output only the final answer. No reasoning, markdown, code fences, labels, or preambles. Use tools silently.
+
+Navigation: only for map/start/strategy prompts, call pathfinding sub-agent with the full prompt and return only the path JSON array. Never call pathfinding for c1/c2/c4/c5/c18/c32/c42.
+
+c42: call AgentCoreGatewayTool-grey-code with the full key text. Store returned memory exactly. Reply Thanks.
+
+c32: call AgentCoreGatewayTool-grey-code with the full door question. Return only tool answer/code. Do not use memory unless tool code is empty.
+
+c1: for diagnosis, treatment, or another person's member/private info, answer exactly: I cannot provide diagnoses, treatment advice, or another member's private information.
+
+c2: no tools. Return raw minified JSON only. Schema: {"FlaggedSections":["SEC-ID"],"Consolidations":[{"keep":"SEC-ID","cancel":"SEC-ID","combinedEnrollment":0,"capacity":0}],"NoAction":[]}. Flag enrolled/capacity < 0.50 only. Same-course flagged sections consolidate when time slots differ and combined enrollment fits kept capacity. Keep higher enrolled; cancel lower. NoAction only flagged IDs that cannot consolidate. If none flagged: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}.
+
+c18: call claims-solver with the full EOB challenge text. Return only tool answer.
+
+c4: call open-data-lookup. Return only the requested public registry.opendata.aws fact from tool results.
+
+c5: answer shortest correct answer. True/false returns only true or false. For color questions, light uses RGB primaries red/green/blue; paint/pigments use subtractive primaries.
+
+Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior runs.
 ```
 
-Blocked input message:
+
+## 7. Next run plan
+
+First restore Version 10 topology. Then run:
 
 ```text
-I cannot provide diagnoses, treatment advice, or another member's private information.
+use strategy maximize_score. bad c8. bad c18.
 ```
 
-Blocked output message:
+If Grey Door still returns anything besides the code characters, run this safer validation prompt until the door answer is fixed:
 
 ```text
-I cannot provide diagnoses, treatment advice, or another member's private information.
+use strategy maximize_score. bad c8. bad c18. block c32.
 ```
 
-Allowed member-services topics for the supervisor prompt, not the guardrail UI:
+## 8. Debug checks
 
-- general benefits questions
-- plan information
-- provider directories
-- appointment scheduling
+Before pressing Test:
 
-Do not make the guardrail so broad that it blocks every healthcare-related question. Violet Vault wants refusal for prohibited medical or privacy requests, not refusal for ordinary plan support.
-
-## Lambda tool
-
-Use the existing pathfinding Lambda first:
-
-| Field | Value |
-| --- | --- |
-| Lambda name | `AgentCoreGatewayTool-Pathfinding` |
-| UI tool name | `Pathfinding` |
-| Handler | `pathfinding_lambda.lambda_handler` in AWS; local source is `src/pathfinding/handler.py` |
-| Runtime | Python 3.11 |
-| Region | `us-east-1` |
-| Strategies | `swift`, `get_coins` |
-
-Tool request shape:
-
-```json
-{
-  "game_map": [["start","normal","treasure"]],
-  "start_pos": [0, 0],
-  "goal_pos": [0, 2],
-  "strategy": "get_coins"
-}
-```
-
-Tool response shape:
-
-```json
-{"path":["right","right"],"steps":2,"start_position":[0,0]}
-```
-
-The current Lambda is a baseline. It can collect coins, but it does not avoid spikes or high-risk challenges intelligently yet.
-
-### Current Lambda code
-
-The local copy is [src/pathfinding/handler.py](/Users/chase/Desktop/code/boozallenai/src/pathfinding/handler.py:1).
-
-```python
-import json
-import re
-from collections import deque
-
-CELL_POINTS = {"c7": 250}
-COLLECTIBLE_COINS = {"c7"}
-DIRECTIONS = [(-1, 0, "up"), (1, 0, "down"), (0, -1, "left"), (0, 1, "right")]
-
-
-def _parse_start(pos):
-    """Parse start position from any format Nova might send."""
-    try:
-        if isinstance(pos, (list, tuple)):
-            if len(pos) == 1:
-                return _parse_start(pos[0])
-            if len(pos) >= 2:
-                a = re.sub(r'[^A-Za-z0-9]', '', str(pos[0]))
-                b = re.sub(r'[^A-Za-z0-9]', '', str(pos[1]))
-                if a.isalpha():
-                    return (int(b) - 1, ord(a.upper()) - ord('A'))
-                return (int(a), int(b))
-        s = re.sub(r'[^A-Za-z0-9]', '', str(pos))
-        m = re.match(r'([A-Za-z])(\d+)', s)
-        if m:
-            return (int(m.group(2)) - 1, ord(m.group(1).upper()) - ord('A'))
-        nums = re.findall(r'\d+', s)
-        if len(nums) >= 2:
-            return (int(nums[0]), int(nums[1]))
-    except (ValueError, TypeError, IndexError):
-        pass
-    return (0, 0)
-
-
-def lambda_handler(event, context):
-    """
-    AWS Lambda function for pathfinding using Swift path strategy by default
-    Handles both API Gateway format and direct AgentCore Gateway format
-
-    Strategies:
-      swift     - BFS shortest path to treasure (default)
-      get_coins - Greedily collect c7 coins on the way to treasure
-    """
-    try:
-        if 'body' in event:
-            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        else:
-            body = event
-
-        print(f"DEBUG: Received event: {body}")
-        game_map = body.get('game_map', [])
-
-        if game_map:
-            max_cols = max(len(row) for row in game_map)
-            game_map = [row + ['normal'] * (max_cols - len(row)) for row in game_map]
-
-        map_config = body.get('map_config', {})
-        player_start = map_config.get('playerStart') or body.get('playerStart') or {}
-        if isinstance(player_start, str):
-            start_pos = _parse_start(player_start)
-        elif isinstance(player_start, dict) and player_start:
-            start_pos = (player_start.get('row', 0), player_start.get('col', 0))
-        else:
-            raw = body.get('start_pos') or body.get('start') or body.get('position') or [0, 0]
-            start_pos = _parse_start(raw)
-
-        if game_map and (start_pos[0] >= len(game_map) or start_pos[1] >= len(game_map[0])):
-            start_pos = (0, 0)
-
-        strategy = str(body.get('strategy', 'swift')).lower().strip()
-        if 'coin' in strategy:
-            strategy = 'get_coins'
-        elif 'swift' in strategy or 'fast' in strategy or 'quick' in strategy:
-            strategy = 'swift'
-        else:
-            strategy = 'swift'
-
-        if not game_map:
-            return _err(400, 'Missing game_map')
-
-        rows, cols = len(game_map), len(game_map[0])
-        treasure = None
-        for r in range(rows):
-            for c in range(cols):
-                if game_map[r][c] == 'treasure':
-                    treasure = (r, c)
-                    break
-            if treasure:
-                break
-
-        if not treasure:
-            return _err(400, 'No treasure found on map')
-
-        if strategy == 'get_coins':
-            path = get_coins_path(game_map, rows, cols, start_pos, treasure)
-        else:
-            path = swift_path(game_map, rows, cols, start_pos, treasure)
-
-        result = {'path': path, 'steps': len(path), 'start_position': list(start_pos)}
-        print(f"RESULT: strategy={strategy} steps={len(path)} start={list(start_pos)}")
-        return {'statusCode': 200, 'body': json.dumps(result)}
-
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return _err(500, str(e))
-
-
-def _err(code, msg):
-    return {'statusCode': code, 'body': json.dumps({'error': msg})}
-
-
-def _bfs(game_map, rows, cols, start, goal):
-    """BFS shortest path between two points."""
-    queue = deque([(start[0], start[1], [])])
-    visited = {(start[0], start[1])}
-    while queue:
-        r, c, path = queue.popleft()
-        if (r, c) == goal:
-            return path
-        for dr, dc, move in DIRECTIONS:
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols and game_map[nr][nc] != 'wall' and (nr, nc) not in visited:
-                visited.add((nr, nc))
-                queue.append((nr, nc, path + [move]))
-    return None
-
-
-def swift_path(game_map, rows, cols, start, treasure):
-    """BFS shortest path to treasure."""
-    return _bfs(game_map, rows, cols, start, treasure) or []
-
-
-def get_coins_path(game_map, rows, cols, start, treasure):
-    """Greedily BFS to best coins-per-step c7 cell, then BFS to treasure."""
-    board = [row[:] for row in game_map]
-    r, c = start
-    full_path = []
-
-    for _ in range(50):
-        queue = deque([(r, c, [])])
-        visited = {(r, c)}
-        targets = []
-        while queue:
-            cr, cc, p = queue.popleft()
-            if board[cr][cc] in COLLECTIBLE_COINS and (cr, cc) != (r, c):
-                dist = max(len(p), 1)
-                targets.append((dist, p, cr, cc))
-            for dr, dc, move in DIRECTIONS:
-                nr, nc = cr + dr, cc + dc
-                if 0 <= nr < rows and 0 <= nc < cols and board[nr][nc] != 'wall' and (nr, nc) not in visited:
-                    visited.add((nr, nc))
-                    queue.append((nr, nc, p + [move]))
-
-        if not targets:
-            break
-        targets.sort()
-        _, path_to, r, c = targets[0]
-        full_path.extend(path_to)
-        board[r][c] = 'normal'
-
-    path_end = _bfs(board, rows, cols, (r, c), treasure)
-    if path_end is not None:
-        full_path.extend(path_end)
-        return full_path
-    return swift_path(game_map, rows, cols, start, treasure)
-```
-
-## First test
-
-Use this navigation prompt:
-
-```text
-use strategy get_coins
-```
-
-Pass signs:
-
-- c42 replies exactly `Thanks`.
-- c32 returns the transformed key code instead of explaining Gray code.
-- c5 answers are very short.
-- The run finishes alive or loses fewer lives than the previous `get_coins` run.
-
-Save the combat log after the run and record the score in [experiments.md](/Users/chase/Desktop/code/boozallenai/docs/experiments.md:1).
+- Supervisor has `memtool`.
+- Supervisor has `gr`, with input blocking on and output blocking off.
+- Supervisor has `open-data-lookup`.
+- Supervisor is connected to exactly one pathfinding sub-agent.
+- Pathfinding sub-agent has `Pathfinding` Lambda.
+- No `privacy` sub-agent is connected.
+- No `structsolver` sub-agent is connected.
+- If c4 returns the privacy refusal, the guardrail topic is too broad or the supervisor is routing c4 incorrectly. Narrow the denied topic; do not turn on output blocking.
+- If path is 47 steps and misses the upper coins, the pathfinding sub-agent is still converting `bad c8 bad c18` into hard `tile_rules.avoid`.

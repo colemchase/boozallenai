@@ -1,18 +1,329 @@
 [
   {
     "name": "swift-wall-detour",
-    "event": {"game_map": [["start", "wall", "treasure"], ["normal", "normal", "normal"]], "strategy": "swift"},
-    "expected": {"path": ["down", "right", "right", "up"], "steps": 4, "start_position": [0, 0]}
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "wall",
+          "treasure"
+        ],
+        [
+          "normal",
+          "normal",
+          "normal"
+        ]
+      ],
+      "strategy": "swift"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
   },
   {
     "name": "coin-detour",
-    "event": {"game_map": [["start", "normal", "treasure"], ["c7", "wall", "wall"]], "strategy": "get_coins"},
-    "expected": {"path": ["down", "up", "right", "right"], "steps": 4, "start_position": [0, 0]}
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "normal",
+          "treasure"
+        ],
+        [
+          "c7",
+          "wall",
+          "wall"
+        ]
+      ],
+      "strategy": "get_coins"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "up",
+        "right",
+        "right"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
   },
   {
     "name": "missing-map",
     "event": {},
     "status": 400,
-    "expected": {"error": "Missing game_map"}
+    "expected": {
+      "error": "Missing game_map"
+    }
+  },
+  {
+    "name": "stringified-player-start",
+    "event": {
+      "game_map": [
+        [
+          "wall",
+          "wall",
+          "wall"
+        ],
+        [
+          "normal",
+          "normal",
+          "treasure"
+        ],
+        [
+          "wall",
+          "wall",
+          "wall"
+        ]
+      ],
+      "playerStart": "[1, 0]",
+      "strategy": "swift"
+    },
+    "expected": {
+      "path": [
+        "right",
+        "right"
+      ],
+      "steps": 2,
+      "start_position": [
+        1,
+        0
+      ]
+    }
+  },
+  {
+    "name": "maximize-score-key-before-door",
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "c42",
+          "c32",
+          "treasure"
+        ]
+      ],
+      "strategy": "maximize_score"
+    },
+    "expected": {
+      "path": [
+        "right",
+        "right",
+        "right"
+      ],
+      "steps": 3,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "maximize-score-prefers-higher-value-detour",
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "c7",
+          "treasure"
+        ],
+        [
+          "normal",
+          "c2",
+          "normal"
+        ]
+      ],
+      "strategy": "maximize_score"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "up",
+        "right"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "full-prompt-grid-parser",
+    "event": {
+      "prompt": "Find a path from position A1, where the position is formatted as {column}{row}. The path should find the treasure on this map: [[\"normal\",\"wall\",\"treasure\"],[\"normal\",\"normal\",\"normal\"]]. use strategy swift"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "tile-rules-avoid-overrides-default",
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "c8",
+          "treasure"
+        ],
+        [
+          "normal",
+          "normal",
+          "normal"
+        ]
+      ],
+      "strategy": "swift",
+      "tile_rules": {
+        "avoid": [
+          "c8"
+        ]
+      }
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "maximize-score-treasure-is-terminal",
+    "event": {
+      "game_map": [
+        [
+          "start",
+          "treasure",
+          "c7"
+        ],
+        [
+          "normal",
+          "normal",
+          "normal"
+        ]
+      ],
+      "strategy": "maximize_score"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up",
+        "left"
+      ],
+      "steps": 5,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "prompt-bad-list-costs-life",
+    "event": {
+      "prompt": "Find a path from position A1. The path should find the treasure on this map: [[\"start\",\"c8\",\"treasure\"],[\"normal\",\"normal\",\"normal\"]]. use strategy maximize_score and bad c8"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "prompt-damage-list-costs-life",
+    "event": {
+      "prompt": "Find a path from position A1. The path should find the treasure on this map: [[\"start\",\"c8\",\"treasure\"],[\"normal\",\"normal\",\"normal\"]]. use strategy maximize_score and c8 damage 1"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "prompt-avoid-and-damage-sentence-syntax",
+    "event": {
+      "prompt": "Find a path from position A1. The path should find the treasure on this map: [[\"start\",\"c18\",\"treasure\"],[\"normal\",\"c8\",\"normal\"],[\"wall\",\"c7\",\"wall\"]]. use strategy maximize_score. bad c8. block c18."
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "down",
+        "up",
+        "right",
+        "up"
+      ],
+      "steps": 6,
+      "start_position": [
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "prompt-block-list-hard-blocks-object",
+    "event": {
+      "prompt": "Find a path from position A1. The path should find the treasure on this map: [[\"start\",\"c8\",\"treasure\"],[\"normal\",\"normal\",\"normal\"]]. use strategy maximize_score and block c8"
+    },
+    "expected": {
+      "path": [
+        "down",
+        "right",
+        "right",
+        "up"
+      ],
+      "steps": 4,
+      "start_position": [
+        0,
+        0
+      ]
+    }
   }
 ]
