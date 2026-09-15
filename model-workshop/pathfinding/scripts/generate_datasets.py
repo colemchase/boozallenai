@@ -43,7 +43,6 @@ def prompt_for(game_map, start=(0,0), strategy="maximize_score", bad=()):
         f"The path should find the treasure on this map: {json.dumps(game_map,separators=(',',':'))}. {suffix}"
     )
 
-
 _PATH_CACHE = {}
 
 
@@ -103,7 +102,6 @@ def faith_sample(path, idx, split):
 
 
 def mutate_map(rng):
-    # Keep the successful game layout as most samples; small maps add variety without risking invalid random mazes.
     if rng.random() < 0.70:
         return BASE_MAP, (3,0), rng.choice(["maximize_score", "get_coins", "swift"]), rng.choice([("c8",), ("c8","c18"), ()])
     m = rng.choice(SMALL_MAPS)

@@ -2,16 +2,23 @@
 
 Restore the Version 10 topology first. It is the best confirmed architecture from the submission history screenshot: supervisor + one pathfinding sub-agent, with memory, guardrail, and open-data lookup attached directly to the supervisor.
 
-Current best known submitted result:
+Current best known local/live result from downloaded combat logs:
 
 ```text
-Version: 10
-Score: 7469
-Lives remaining: 1
-Architecture: supervisor + pathfinding sub-agent
-Supervisor tools: memtool, gr, open-data-lookup
+Combat log: game-events-2026-09-15T05-32-43.json
+Score: 11852
+Lives remaining: 4
+Coins earned: 9100
+Tokens used: 3966
+Challenges attempted: 16
+Custom models: 0
+Navigation prompt: use strategy maximize_score. bad c8.
+Architecture: foundation supervisor + one foundation pathfinding sub-agent
+Supervisor tools: memtool, gr, open-data-lookup, grey-code, claims-solver
 Pathfinding sub-agent tools: Pathfinding
 ```
+
+The 2026-09-15 custom-model attempt failed: the custom supervisor emitted `<think>` text and JSON wrappers, and the custom pathfinder timed out or invented moves. Do not use custom models for scoring unless retesting in isolation.
 
 ## 1. Target topology
 
@@ -145,7 +152,7 @@ Settings:
 
 | Field | Value |
 | --- | --- |
-| Model | Claude Haiku 4.5 |
+| Model | Foundation model that worked before, preferably Claude Haiku 4.5 |
 | Memory | none |
 | Guardrail | none |
 | Lambda tools | `Pathfinding` |
@@ -203,88 +210,28 @@ Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior
 ```
 
 
-## 6A. Compact supervisor prompt experiment
-
-Use this only after the full prompt is stable. Baseline to beat: 11,851 with `use strategy maximize_score. bad c8.`
-
-```text
-Output only the final answer. No reasoning, markdown, code fences, labels, or preambles. Use tools silently. When a tool returns an `answer` field, copy that value exactly unless a challenge rule says otherwise.
-
-Navigation: only for map/start/strategy prompts, call pathfinding sub-agent with the full prompt and return only the path JSON array. Never call pathfinding for c1/c2/c4/c5/c18/c32/c42.
-
-c42: call AgentCoreGatewayTool-grey-code with the full key text. Store returned memory exactly. Reply Thanks.
-
-c32: call AgentCoreGatewayTool-grey-code with the full door question. Return only tool answer/code. Do not use memory unless tool code is empty.
-
-c1: for diagnosis, treatment, or another person's member/private info, answer exactly: I cannot provide diagnoses, treatment advice, or another member's private information.
-
-c2: no tools. Return raw minified JSON only. Schema: {"FlaggedSections":["SEC-ID"],"Consolidations":[{"keep":"SEC-ID","cancel":"SEC-ID","combinedEnrollment":0,"capacity":0}],"NoAction":[]}. Flag enrolled/capacity < 0.50 only. Same-course flagged sections consolidate when time slots differ and combined enrollment fits kept capacity. Keep higher enrolled; cancel lower. NoAction only flagged IDs that cannot consolidate. If none flagged: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}.
-
-c18: call claims-solver with the full EOB challenge text. Return the tool answer string exactly, byte-for-byte. The answer must start with { and end with }. Never convert it to prose, currency labels, bullets, markdown, or a summary.
-
-c4: call open-data-lookup. Return only the requested public registry.opendata.aws fact from tool results.
-
-c5: answer shortest correct answer. True/false returns only true or false. For color questions, light uses RGB primaries red/green/blue; paint/pigments use subtractive primaries.
-
-Never hardcode paths, maps, keys, dataset facts, or challenge answers from prior runs.
-```
-
-## 6B. Lean supervisor prompt for token sprint
-
-Use this when correctness is already stable and the next goal is lower token use. It preserves the working tool routing but removes most prose.
-
-```text
-Final answer only. No reasoning, markdown, code fences, labels, bullets, or preambles. Use tools silently. If a tool returns answer/code, copy only that value.
-
-Navigation prompts with map/start/strategy: call pathfinding sub-agent with full prompt. Return only path JSON array. Never call pathfinding for challenges.
-
-c42 key: call grey-code with full text. Store returned memory. Reply Thanks.
-c32 door: call grey-code with full text. Return only answer/code.
-c1 privacy/medical/other-member info: I cannot provide diagnoses, treatment advice, or another member's private information.
-c4 registry.opendata.aws: call open-data-lookup. Return only requested fact.
-c18 EOB: call claims-solver with full text. Return exact tool answer string only.
-c5 simple: shortest correct answer only; true/false only true or false. Light color primaries are red/green/blue. Pigment primaries are subtractive.
-
-c2 schedule: no tools. Return one minified JSON object only, starting with { and ending with }. No ``` ever. Flag enrolled/capacity < .5, not exactly .5. Consolidate only same course + both flagged + different times + combined enrollment fits kept capacity. Keep higher enrolled. Schema: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]} with consolidation objects {"keep":"","cancel":"","combinedEnrollment":0,"capacity":0}.
-
-Do not hardcode prior answers, maps, keys, or facts.
-```
-
-## 6C. Chinese-compressed supervisor prompt experiment
-
-Use this only as a token experiment. Required challenge answers stay in English / exact JSON. If any tool routing or challenge answer regresses, return to 6A or 6B.
-
-```text
-只输出最终答案。不要解释、markdown、代码块、标签、项目符号、前言。工具静默使用。若工具返回 answer/code，只复制该值。所有挑战答案必须用题目要求的英文、数字或JSON格式；不要用中文回答挑战。
-
-导航题含 map/start/strategy：把完整原文交给 pathfinding sub-agent。只返回方向JSON数组。挑战题绝不调用pathfinding。
-
-c42 key：用全文调用 grey-code。保存返回memory。答 Thanks。
-c32 door：用全文调用 grey-code。只答 answer/code。
-c1 隐私/医疗/他人会员信息：固定答 I cannot provide diagnoses, treatment advice, or another member's private information.
-c4 registry.opendata.aws：调用 open-data-lookup。只答被问到的公开事实。
-c18 EOB：用全文调用 claims-solver。逐字返回工具answer字符串。
-c5 simple：最短正确英文答案；true/false题只答 true 或 false。光的三原色是 red/green/blue；颜料是减色体系。
-
-c2 schedule：不用工具。只返回一个压缩JSON对象，首字符{末字符}。绝不使用```。规则：enrolled/capacity < .5 才flag，等于.5不flag。同course且两者flag且时间不同且合并人数能放入保留section容量时才consolidate。保留enrolled较大的section。Schema: {"FlaggedSections":[],"Consolidations":[],"NoAction":[]}；consolidation对象: {"keep":"","cancel":"","combinedEnrollment":0,"capacity":0}。
-
-禁止硬编码历史答案、地图、key、事实。
-```
-
 
 ## 7. Next run plan
 
-First restore Version 10 topology. Then run:
+Restore the known-good topology and foundation models. Then run:
 
 ```text
-use strategy maximize_score. bad c8. bad c18.
+use strategy maximize_score. bad c8.
 ```
 
-If Grey Door still returns anything besides the code characters, run this safer validation prompt until the door answer is fixed:
+Do not include `bad c18` for the scoring baseline. The best 11,852 run did not bad c18 and passed both c18 challenges with `claims-solver`. Only use `bad c18` for diagnostic runs if claims handling regresses.
 
-```text
-use strategy maximize_score. bad c8. bad c18. block c32.
-```
+## 7A. Model reset checklist
+
+Use this after any custom-model experiment:
+
+| Agent | Model | Reason |
+| --- | --- | --- |
+| Supervisor | foundation model, not custom Qwen | Custom supervisor emitted `<think>` and wrapped answers. |
+| Pathfinding sub-agent | foundation model, not custom Qwen | Custom pathfinder timed out or invented moves. |
+
+After resetting models, leave the tools/topology unchanged and run `use strategy maximize_score. bad c8.`. A healthy first path starts with `down`, not `right`.
+
 
 ## 8. Debug checks
 
@@ -302,9 +249,9 @@ Before pressing Test:
 
 ## 9. Pathfinding custom model experiment
 
-Optional experiment for the Model Workshop: use the assets in `model-workshop/pathfinding/` to train a custom model for the pathfinding sub-agent only.
+Optional experiment only. The live scoring baseline should use the foundation pathfinding sub-agent. The `model-workshop/pathfinding/` folder has been reset to the first-version workshop format: `pathfinding_lambda` with a single `prompt` argument, followed by faithfulness training.
 
-Do not assign the custom model to the supervisor. Keep the supervisor on the current foundation model because it handles mixed challenge routing and safety behavior.
+Do not assign a custom model to the supervisor. Keep the supervisor on the current foundation model because it handles mixed challenge routing and safety behavior.
 
 Artifacts:
 
@@ -318,4 +265,30 @@ Artifacts:
 
 Baseline to beat: 11,851 using `use strategy maximize_score. bad c8.`
 
-If the custom model changes the path, drops steps, or lowers challenge pass rate, revert the pathfinding sub-agent to the foundation model.
+If the custom model changes the path, drops steps, times out, starts by moving right into the wall on the A4 map, or lowers challenge pass rate, revert the pathfinding sub-agent to the foundation model.
+
+## 10. Supervisor custom model experiment
+
+Use this only as a higher-risk overnight experiment. The current foundation supervisor remains the scoring baseline and rollback.
+
+Artifacts are in `model-workshop/supervisor/`:
+
+- `data/supervisor_routing_train.jsonl`
+- `data/supervisor_routing_validation.jsonl`
+- `data/supervisor_final_train.jsonl`
+- `data/supervisor_final_validation.jsonl`
+- `evaluators/supervisor_routing_reward.py`
+- `evaluators/supervisor_final_reward.py`
+- `README.md`
+
+Train in two stages:
+
+1. Stage 1 routing: train from Qwen3-0.6B with `supervisor-routing-reward` and the routing datasets.
+2. Stage 2 final output: continue from the Stage 1 model with `supervisor-final-reward` and the final-output datasets.
+
+Attach this custom model only after it is deployed and only for a test run. Keep it only if all 16 challenges pass and the score beats the foundation supervisor baseline.
+
+
+## AWS inventory note
+
+On 2026-09-15, local AWS CLI inventory could not verify live resources because the `ai-league` session token was expired (`ExpiredTokenException`). Refresh credentials from Workshop Studio before using AWS CLI checks. Until then, the local architecture reflects the best downloaded combat logs and the UI reset described by the user.

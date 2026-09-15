@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 def _loads(value: Any):
@@ -20,7 +20,7 @@ def _assistant_response(sample: Dict[str, Any]) -> str:
         if isinstance(val, str):
             return val
     for msg in sample.get("messages", []) or sample.get("prompt", []) or []:
-        if msg.get("role") == "assistant":
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
             return msg.get("content", "")
     return ""
 

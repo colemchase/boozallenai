@@ -2,7 +2,9 @@
 
 Goal: train a small custom model for the pathfinding sub-agent only. Do not assign this model to the supervisor.
 
-Baseline to beat: current architecture with foundation model pathfinding sub-agent, `use strategy maximize_score. bad c8.`, best observed score 11,851.
+This folder is reset to the original first-version workflow: train the model to emit a `pathfinding_lambda` tool call with one `prompt` argument, then train it to relay the returned path array exactly.
+
+Baseline to beat: current architecture with foundation model pathfinding sub-agent, `use strategy maximize_score. bad c8.`, best observed score around 11,850.
 
 ## Files
 
@@ -15,38 +17,49 @@ Baseline to beat: current architecture with foundation model pathfinding sub-age
 
 ## Stage 1: tool calling
 
-First create the evaluator in SageMaker Studio:
+Create the evaluator in SageMaker Studio:
 
 1. Go to Assets > Evaluators.
 2. Create a Reward Function evaluator named `pathfinding-tool-calling-reward`.
 3. Paste the full contents of `evaluators/tool_calling_reward.py` as the method code.
-4. Test it if Studio offers a test button, then create it.
+4. Test/create it.
 
-Then start the customization job from Qwen3-0.6B:
+Start the customization job from Qwen3-0.6B:
 
 1. Customization technique: RLVR.
 2. Training type: LoRA.
 3. Reward function type: Custom.
 4. Reward functions: `pathfinding-tool-calling-reward`.
-5. Dataset and output: choose Upload dataset.
+5. Dataset and output: Upload dataset.
 6. Upload:
    - train: `data/tool_calling_train.jsonl`
    - validation/evaluation: `data/tool_calling_validation.jsonl`
-7. Use about 25 steps first.
-8. Launch and wait for completion.
+7. Epochs: `1`.
+8. Use conservative settings:
+   - learning rate: `0.00003` to `0.00005`
+   - temperature: `0.1` to `0.2`
+   - rollout temperature: `0.1` to `0.2`
+   - LoRA rank: `8` if available
+   - rollout samples per prompt: `4` if available
 
-This teaches the custom model to emit a pathfinding tool call for navigation prompts.
+This teaches the custom model to emit:
+
+```text
+<tool_call>{"name":"pathfinding_lambda","arguments":{"prompt":"..."}}</tool_call>
+```
 
 ## Stage 2: faithfulness
 
-After Stage 1 completes, create the second evaluator:
+Continue from the completed Stage 1 model.
+
+Create the evaluator:
 
 1. Go to Assets > Evaluators.
 2. Create a Reward Function evaluator named `pathfinding-faithfulness-reward`.
 3. Paste the full contents of `evaluators/faithfulness_reward.py` as the method code.
-4. Test it if Studio offers a test button, then create it.
+4. Test/create it.
 
-Continue customization from the completed Stage 1 model, not from the base model:
+Continue customization:
 
 1. Open the Stage 1 model details.
 2. Choose Continue customization / Train with different technique.
@@ -54,17 +67,21 @@ Continue customization from the completed Stage 1 model, not from the base model
 4. Training type: LoRA.
 5. Reward function type: Custom.
 6. Reward functions: `pathfinding-faithfulness-reward`.
-7. Dataset and output: choose Upload dataset.
+7. Dataset and output: Upload dataset.
 8. Upload:
    - train: `data/faithfulness_train.jsonl`
    - validation/evaluation: `data/faithfulness_validation.jsonl`
-9. Use about 30 steps.
+9. Epochs: `1`.
+10. Use lower-temperature settings:
+   - learning rate: `0.00002`
+   - temperature: `0.05`
+   - rollout temperature: `0.05`
 
-This teaches the model to return the path array exactly.
+The faithfulness evaluator has the crash fix for Studio wrappers like `{"path":[...],"steps":77}`.
 
 ## Register/deploy/use
 
-1. Register the completed training job ARN in the AI League Model Workshop.
+1. Register the completed Stage 2 training job ARN in AI League Model Workshop.
 2. Deploy the registered model.
 3. Assign it only to the pathfinding sub-agent.
 4. Keep the supervisor on the current foundation model.
@@ -74,16 +91,16 @@ This teaches the model to return the path array exactly.
 use strategy maximize_score. bad c8.
 ```
 
-Success criteria:
+Keep it only if:
 
-- Same or better route.
-- No dropped path steps.
-- All 16 challenges still pass.
-- `customModelCount` becomes 1 or custom model bonus appears.
-- Score beats 11,851 or token/custom-model bonus improves without correctness regression.
+- same route or better route
+- no dropped path steps
+- no invented first move into a wall
+- all 16 challenges still pass
+- score/custom-model bonus improves
 
 If pathfinding changes or breaks, revert the pathfinding sub-agent model to the foundation model.
 
 ## Local smoke test
 
-Both evaluator files were smoke-tested locally against known-good samples. Each returned `aggregate_reward_score: 1.0` and a Lambda-style `statusCode: 200` response.
+Both evaluator files were smoke-tested locally against known-good samples. Each returned `aggregate_reward_score: 1.0` and Lambda-style `statusCode: 200`.
